@@ -22,7 +22,7 @@ import { ReviewLoadChart } from "./components/ReviewLoadChart";
 import { StalePRTable } from "./components/StalePRTable";
 import { StatTile } from "./components/StatTile";
 import { TimeToMergeTrend } from "./components/TimeToMergeTrend";
-import { formatHours } from "./format";
+import { computeDurationDelta, formatHours, toWeeklyTrend } from "./format";
 
 const EMPTY_SUMMARY: DurationSummary = { count: 0, avg_hours: null, median_hours: null, items: [] };
 
@@ -142,23 +142,30 @@ export default function App() {
 
       {selectedRepo && (
         <>
-          <div className="stat-grid">
-            <StatTile
-              label="Median time-to-first-review"
-              value={formatHours(ttfr.median_hours)}
-              sublabel={`${ttfr.count} reviewed PR${ttfr.count === 1 ? "" : "s"}`}
-            />
-            <StatTile
-              label="Avg time-to-first-review"
-              value={formatHours(ttfr.avg_hours)}
-            />
-            <StatTile
-              label="Median time-to-merge"
-              value={formatHours(ttm.median_hours)}
-              sublabel={`${ttm.count} merged PR${ttm.count === 1 ? "" : "s"}`}
-            />
-            <StatTile label="Avg time-to-merge" value={formatHours(ttm.avg_hours)} />
-          </div>
+          {(() => {
+            const ttfrTrend = toWeeklyTrend(ttfr.items);
+            const ttmTrend = toWeeklyTrend(ttm.items);
+            return (
+              <div className="stat-grid">
+                <StatTile
+                  hero
+                  label="Time-to-first-review (median)"
+                  value={formatHours(ttfr.median_hours)}
+                  sublabel={`avg ${formatHours(ttfr.avg_hours)} · ${ttfr.count} reviewed PR${ttfr.count === 1 ? "" : "s"}`}
+                  delta={computeDurationDelta(ttfr.items)}
+                  trend={ttfrTrend.map((p) => p.medianHours)}
+                />
+                <StatTile
+                  hero
+                  label="Time-to-merge (median)"
+                  value={formatHours(ttm.median_hours)}
+                  sublabel={`avg ${formatHours(ttm.avg_hours)} · ${ttm.count} merged PR${ttm.count === 1 ? "" : "s"}`}
+                  delta={computeDurationDelta(ttm.items)}
+                  trend={ttmTrend.map((p) => p.medianHours)}
+                />
+              </div>
+            );
+          })()}
 
           <div className="panel">
             <h2>Review load</h2>

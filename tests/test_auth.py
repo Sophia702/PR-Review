@@ -24,7 +24,12 @@ def test_state_round_trips():
 def test_state_rejects_tampering():
     serializer = auth_module._state_serializer()
     state = serializer.dumps({"nonce": "abc", "return_to": "http://localhost:5173"})
-    tampered = state[:-1] + ("x" if state[-1] != "x" else "y")
+    # Flip a character in the middle (well inside the payload segment), not
+    # the last character of the string: unpadded base64's final character
+    # can have "don't care" bits where more than one character decodes to
+    # the same bytes, so a last-character flip isn't reliably a real change.
+    mid = len(state) // 2
+    tampered = state[:mid] + ("x" if state[mid] != "x" else "y") + state[mid + 1 :]
 
     with pytest.raises(BadSignature):
         serializer.loads(tampered, max_age=600)

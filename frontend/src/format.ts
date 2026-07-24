@@ -46,3 +46,31 @@ export function formatWeekLabel(week: string): string {
   const d = new Date(week);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+export interface Delta {
+  percentChange: number;
+  improved: boolean;
+}
+
+const MIN_ITEMS_PER_HALF = 2;
+
+/** Splits the full (chronologically ordered) item set into an earlier and a
+ * more recent half and compares their medians. Deliberately not a
+ * week-over-week comparison: with sparse data (a PR or two per week) that
+ * would swing wildly on sample noise alone and read as a dramatic change
+ * that isn't real. Requires at least MIN_ITEMS_PER_HALF PRs in each half -
+ * returns null rather than show a delta backed by too little data.
+ * Lower is better for duration metrics (time-to-first-review, time-to-merge),
+ * so a negative change is the "improved" direction. */
+export function computeDurationDelta(items: PRDuration[]): Delta | null {
+  if (items.length < MIN_ITEMS_PER_HALF * 2) return null;
+
+  const sorted = [...items].sort((a, b) => a.end_at.localeCompare(b.end_at));
+  const mid = Math.floor(sorted.length / 2);
+  const previous = median(sorted.slice(0, mid).map((item) => item.hours));
+  const current = median(sorted.slice(mid).map((item) => item.hours));
+  if (previous === 0) return null;
+
+  const percentChange = ((current - previous) / previous) * 100;
+  return { percentChange, improved: percentChange < 0 };
+}

@@ -1,4 +1,4 @@
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ReviewerLoad } from "../api";
 
 interface ReviewLoadChartProps {
@@ -43,7 +43,15 @@ export function ReviewLoadChart({ data }: ReviewLoadChartProps) {
           }}
           formatter={(value: number) => [`${value} review${value === 1 ? "" : "s"}`, "Reviews given"]}
         />
-        <Bar dataKey="review_count" fill="var(--series-1)" radius={[0, 4, 4, 0]} maxBarSize={24} />
+        <Bar dataKey="review_count" fill="var(--series-1)" radius={[0, 4, 4, 0]} maxBarSize={24}>
+          <LabelList
+            dataKey="review_count"
+            position="right"
+            fill="var(--text-secondary)"
+            fontSize={12}
+            formatter={(value: number) => String(value)}
+          />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
