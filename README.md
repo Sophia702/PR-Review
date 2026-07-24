@@ -14,9 +14,9 @@ This is genuinely useful internal-tooling territory — companies build exactly 
 
 **Week 2 (dashboard) — done.** React + TypeScript + Vite + Recharts dashboard in `frontend/`: repo picker with an inline sync/re-sync action, date-range and author filters, stat tiles for time-to-first-review and time-to-merge, a review-load bar chart, a weekly time-to-merge trend line, and a stale-PR table. Verified in an actual headless-Chromium run against the live-synced `encode/httpx` data — no console errors, real numbers rendered.
 
-**CI — done.** `.github/workflows/ci.yml` runs the pytest suite (fresh venv) and the frontend typecheck+build (`tsc -b && vite build`, fresh `npm ci`) on push/PR to `main`. Both verified locally exactly as CI would run them before committing the workflow.
+**CI — done.** `.github/workflows/ci.yml` runs the pytest suite (fresh venv) and the frontend typecheck+build (`tsc --noEmit && vite build`, fresh `npm ci`) on push/PR to `main`. Both verified locally exactly as CI would run them before committing the workflow.
 
-**Not started yet:** deployment.
+**Deployment — config written, not yet live.** Fly.io (backend + frontend) + Neon (Postgres). See [DEPLOY.md](DEPLOY.md) — needs your Fly/Neon accounts to actually go live.
 
 See [Suggested build order](#suggested-build-order-23-weeks) below for what's next.
 
@@ -67,7 +67,7 @@ Compute these as SQL aggregations or pandas — either is defensible, pandas is 
 
 - Deploy against a real public repo (maybe your own repo, or a popular open-source repo) so the dashboard has real data and a live demo link
 
-**Not started.** Note for later: pick a repo with a few hundred PRs, not thousands — a large OSS repo will hit rate limits or take a long time on first backfill.
+**Config written, not yet live.** Dockerfiles + `fly.toml` for both apps (backend on Fly, frontend static build served via nginx on Fly), targeting Neon for managed Postgres. See [DEPLOY.md](DEPLOY.md) for the full walkthrough — the login/account-creation steps need your Fly and Neon accounts, so those are still open. Already synced against `encode/httpx` for local validation (few hundred PRs, not thousands — a large OSS repo would hit rate limits or take a long time on first backfill).
 
 ## Suggested build order (2–3 weeks)
 
@@ -117,7 +117,9 @@ npm install
 cp .env.example .env   # VITE_API_BASE_URL defaults to http://localhost:8000
 
 npm run dev             # http://localhost:5173, needs the backend running
-npm run build            # type-checks (tsc -b) then produces dist/
+npm run build            # type-checks (tsc --noEmit) then produces dist/
 ```
+
+See [DEPLOY.md](DEPLOY.md) for deploying both to Fly.io with Neon Postgres.
 
 The backend needs `CORS_ALLOW_ORIGINS` to include the dev server's origin — it already defaults to `["http://localhost:5173"]` in `backend/app/config.py`.
