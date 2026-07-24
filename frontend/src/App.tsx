@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import {
   type DurationSummary,
+  type ReciprocityPair,
   type RepoSummary,
   type ReviewerLoad,
   type StalePR,
   getReviewLoad,
+  getReviewReciprocity,
   getStalePRs,
   getTimeToFirstReview,
   getTimeToMerge,
@@ -12,6 +14,7 @@ import {
   triggerSync,
 } from "./api";
 import { Filters } from "./components/Filters";
+import { ReciprocityTable } from "./components/ReciprocityTable";
 import { ReviewLoadChart } from "./components/ReviewLoadChart";
 import { StalePRTable } from "./components/StalePRTable";
 import { StatTile } from "./components/StatTile";
@@ -33,6 +36,7 @@ export default function App() {
   const [ttm, setTtm] = useState<DurationSummary>(EMPTY_SUMMARY);
   const [load, setLoad] = useState<ReviewerLoad[]>([]);
   const [stale, setStale] = useState<StalePR[]>([]);
+  const [reciprocity, setReciprocity] = useState<ReciprocityPair[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -66,12 +70,14 @@ export default function App() {
       getTimeToMerge(owner, name, filters),
       getReviewLoad(owner, name, { since: filters.since, until: filters.until }),
       getStalePRs(owner, name, staleDays),
+      getReviewReciprocity(owner, name),
     ])
-      .then(([ttfrData, ttmData, loadData, staleData]) => {
+      .then(([ttfrData, ttmData, loadData, staleData, reciprocityData]) => {
         setTtfr(ttfrData);
         setTtm(ttmData);
         setLoad(loadData);
         setStale(staleData);
+        setReciprocity(reciprocityData);
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
@@ -154,6 +160,11 @@ export default function App() {
           <div className="panel">
             <h2>Stale PRs (open, idle {staleDays}+ days)</h2>
             <StalePRTable data={stale} />
+          </div>
+
+          <div className="panel">
+            <h2>Review reciprocity</h2>
+            <ReciprocityTable data={reciprocity} />
           </div>
 
           {loading && <div className="panel-empty">Refreshing…</div>}

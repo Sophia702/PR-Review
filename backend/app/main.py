@@ -102,3 +102,14 @@ def get_stale_prs(
 ) -> list[metrics.StalePR]:
     repo_row = _get_repo(db, owner, repo)
     return metrics.stale_prs(db, repo_row.id, stale_days=stale_days)
+
+
+@app.get("/metrics/{owner}/{repo}/review-reciprocity")
+def get_review_reciprocity(
+    owner: str,
+    repo: str,
+    min_interactions: int = Query(2, ge=1),
+    db: Session = Depends(get_db),
+) -> list[metrics.ReciprocityPair]:
+    repo_row = _get_repo(db, owner, repo)
+    return metrics.review_reciprocity(db, repo_row.id, min_interactions=min_interactions)

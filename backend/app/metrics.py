@@ -44,6 +44,15 @@ class StalePR:
     days_stale: int
 
 
+@dataclass
+class ReciprocityPair:
+    person_a: str
+    person_b: str
+    a_reviews_b: int
+    b_reviews_a: int
+    one_directional: bool
+
+
 def _duration_summary(rows) -> DurationSummary:
     items = []
     hours_list = []
@@ -184,3 +193,63 @@ def stale_prs(
         )
         for pr, author_login in db.execute(query).all()
     ]
+
+
+def review_reciprocity(
+    db: Session,
+    repo_id: int,
+    min_interactions: int = 2,
+) -> list[ReciprocityPair]:
+    """For each pair of contributors, how many times did each review the
+    other's PRs — surfaces one-directional relationships (A always reviews
+    B, B never reciprocates), which can point at team dynamics a simple
+    review-load count misses.
+
+    Bots and self-reviews are excluded. `min_interactions` filters out pairs
+    with too little data to mean anything (default: at least 2 reviews
+    total between the pair, in either direction).
+    """
+    author_alias = aliased(User)
+    reviewer_alias = aliased(User)
+    query = (
+        select(author_alias.login, reviewer_alias.login, func.count(Review.id))
+        .select_from(Review)
+        .join(PullRequest, Review.pull_request_id == PullRequest.id)
+        .join(author_alias, PullRequest.author_id == author_alias.id)
+        .join(reviewer_alias, Review.reviewer_id == reviewer_alias.id)
+        .where(
+            PullRequest.repo_id == repo_id,
+            author_alias.is_bot.is_(False),
+            reviewer_alias.is_bot.is_(False),
+            Review.submitted_at.isnot(None),
+            author_alias.id != reviewer_alias.id,
+        )
+        .group_by(author_alias.login, reviewer_alias.login)
+    )
+
+    directional_counts: dict[tuple[str, str], int] = {}
+    for author_login, reviewer_login, count in db.execute(query).all():
+        directional_counts[(reviewer_login, author_login)] = count
+
+    pairs: dict[tuple[str, str], dict[str, int]] = {}
+    for (reviewer, author), count in directional_counts.items():
+        key = tuple(sorted((reviewer, author)))
+        bucket = pairs.setdefault(key, {"a_reviews_b": 0, "b_reviews_a": 0})
+        if reviewer == key[0]:
+            bucket["a_reviews_b"] = count
+        else:
+            bucket["b_reviews_a"] = count
+
+    result = [
+        ReciprocityPair(
+            person_a=a,
+            person_b=b,
+            a_reviews_b=v["a_reviews_b"],
+            b_reviews_a=v["b_reviews_a"],
+            one_directional=(v["a_reviews_b"] == 0) != (v["b_reviews_a"] == 0),
+        )
+        for (a, b), v in pairs.items()
+        if (v["a_reviews_b"] + v["b_reviews_a"]) >= min_interactions
+    ]
+    result.sort(key=lambda p: p.a_reviews_b + p.b_reviews_a, reverse=True)
+    return result

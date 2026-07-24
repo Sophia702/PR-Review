@@ -34,6 +34,14 @@ export interface StalePR {
   days_stale: number;
 }
 
+export interface ReciprocityPair {
+  person_a: string;
+  person_b: string;
+  a_reviews_b: number;
+  b_reviews_a: number;
+  one_directional: boolean;
+}
+
 export interface MetricsFilters {
   since?: string;
   until?: string;
@@ -90,4 +98,12 @@ export function getReviewLoad(
 
 export function getStalePRs(owner: string, repo: string, staleDays: number): Promise<StalePR[]> {
   return getJSON(`/metrics/${owner}/${repo}/stale-prs`, { stale_days: String(staleDays) });
+}
+
+export function getReviewReciprocity(
+  owner: string,
+  repo: string,
+  minInteractions = 2,
+): Promise<ReciprocityPair[]> {
+  return getJSON(`/metrics/${owner}/${repo}/review-reciprocity`, { min_interactions: String(minInteractions) });
 }

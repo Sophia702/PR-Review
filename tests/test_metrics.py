@@ -205,3 +205,77 @@ def test_stale_prs_only_returns_open_prs_past_threshold(db_session):
 
     assert [s.number for s in stale] == [1]
     assert stale[0].days_stale == 20
+
+
+def test_review_reciprocity_detects_one_directional_pair(db_session):
+    repo = _repo(db_session)
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+
+    # bob reviews alice's PRs twice; alice never reviews bob's.
+    alice_pr1 = _pr(db_session, repo, 1, alice, created_at=NOW)
+    alice_pr2 = _pr(db_session, repo, 2, alice, created_at=NOW)
+    _review(db_session, alice_pr1, bob, submitted_at=NOW + timedelta(hours=1))
+    _review(db_session, alice_pr2, bob, submitted_at=NOW + timedelta(hours=2))
+
+    pairs = metrics.review_reciprocity(db_session, repo.id, min_interactions=2)
+
+    assert len(pairs) == 1
+    pair = pairs[0]
+    assert {pair.person_a, pair.person_b} == {"alice", "bob"}
+    assert pair.one_directional is True
+    counts = {pair.person_a: pair.a_reviews_b, pair.person_b: pair.b_reviews_a}
+    assert counts["bob"] == 2  # bob -> alice
+    assert counts["alice"] == 0  # alice -> bob
+
+
+def test_review_reciprocity_symmetric_pair_is_not_one_directional(db_session):
+    repo = _repo(db_session)
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+
+    alice_pr = _pr(db_session, repo, 1, alice, created_at=NOW)
+    bob_pr = _pr(db_session, repo, 2, bob, created_at=NOW)
+    _review(db_session, alice_pr, bob, submitted_at=NOW + timedelta(hours=1))
+    _review(db_session, bob_pr, alice, submitted_at=NOW + timedelta(hours=1))
+
+    pairs = metrics.review_reciprocity(db_session, repo.id, min_interactions=2)
+
+    assert len(pairs) == 1
+    assert pairs[0].one_directional is False
+
+
+def test_review_reciprocity_excludes_bots_and_self_reviews(db_session):
+    repo = _repo(db_session)
+    alice = _user(db_session, "alice")
+    ci_bot = _user(db_session, "ci-bot", is_bot=True)
+
+    pr = _pr(db_session, repo, 1, alice, created_at=NOW)
+    _review(db_session, pr, ci_bot, submitted_at=NOW + timedelta(hours=1))
+    _review(db_session, pr, alice, submitted_at=NOW + timedelta(hours=2))  # self-review edge case
+
+    pairs = metrics.review_reciprocity(db_session, repo.id, min_interactions=1)
+
+    assert pairs == []
+
+
+def test_review_reciprocity_filters_pairs_below_min_interactions(db_session):
+    repo = _repo(db_session)
+    alice = _user(db_session, "alice")
+    bob = _user(db_session, "bob")
+    carol = _user(db_session, "carol")
+
+    # alice/bob: only 1 interaction total -> filtered out at default threshold of 2
+    alice_pr = _pr(db_session, repo, 1, alice, created_at=NOW)
+    _review(db_session, alice_pr, bob, submitted_at=NOW + timedelta(hours=1))
+
+    # alice/carol: 2 interactions -> kept
+    alice_pr2 = _pr(db_session, repo, 2, alice, created_at=NOW)
+    carol_pr = _pr(db_session, repo, 3, carol, created_at=NOW)
+    _review(db_session, alice_pr2, carol, submitted_at=NOW + timedelta(hours=1))
+    _review(db_session, carol_pr, alice, submitted_at=NOW + timedelta(hours=1))
+
+    pairs = metrics.review_reciprocity(db_session, repo.id, min_interactions=2)
+
+    assert len(pairs) == 1
+    assert {pairs[0].person_a, pairs[0].person_b} == {"alice", "carol"}

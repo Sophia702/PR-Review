@@ -47,14 +47,14 @@ This is where the actual engineering thinking lives — pick a handful of well-d
 
 Compute these as SQL aggregations or pandas — either is defensible, pandas is faster to prototype with.
 
-**Built:** the first four as SQL aggregations (SQLAlchemy Core `select`/`func`, not pandas) in `backend/app/metrics.py`, so they run live against `/metrics` without loading full tables into memory. Review reciprocity is deliberately deferred — it needs real data volume to not be noisy.
+**Built:** all five as SQL aggregations (SQLAlchemy Core `select`/`func`, not pandas) in `backend/app/metrics.py`, so they run live against `/metrics` without loading full tables into memory. Review reciprocity has a `min_interactions` floor (default 2) so single-review noise doesn't get reported as a "pattern" — validated against `encode/httpx`, which surfaced a real one-directional pair.
 
 ### 3. Frontend/dashboard
 
 - React + a charting library (Recharts) — bar charts for review load, line chart for time-to-merge trend over weeks, a table of stale PRs
 - Filterable by repo, by date range, by author
 
-**Built:** `frontend/` — Vite + React + TypeScript + Recharts. Repo picker (with an inline sync/re-sync button so you don't need the API directly), since/until/author filters, a stale-days threshold control. Time-to-merge trend is bucketed into weekly medians client-side from the `time-to-merge` endpoint's per-PR items, rather than a dedicated backend aggregation. Chart colors and mark specs (bar thickness, line width, tooltip styling, stale-severity badges) follow a validated categorical/sequential palette rather than library defaults.
+**Built:** `frontend/` — Vite + React + TypeScript + Recharts. Repo picker (with an inline sync/re-sync button so you don't need the API directly), since/until/author filters, a stale-days threshold control, plus a review-reciprocity table flagging one-directional review pairs. Time-to-merge trend is bucketed into weekly medians client-side from the `time-to-merge` endpoint's per-PR items, rather than a dedicated backend aggregation. Chart colors and mark specs (bar thickness, line width, tooltip styling, stale/reciprocity badges) follow a validated categorical/sequential palette rather than library defaults.
 
 ### 4. Testing + CI
 
@@ -108,6 +108,7 @@ Endpoints once the app is running:
 - `GET /metrics/{owner}/{repo}/time-to-merge?since=&until=&author=`
 - `GET /metrics/{owner}/{repo}/review-load?since=&until=`
 - `GET /metrics/{owner}/{repo}/stale-prs?stale_days=14`
+- `GET /metrics/{owner}/{repo}/review-reciprocity?min_interactions=2`
 
 ### Frontend
 
