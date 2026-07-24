@@ -1,34 +1,35 @@
 # PR Review Analytics
 
-A dashboard that turns a GitHub repo's pull request history into the metrics an engineering team actually wants to know: how long reviews take, who's carrying the review load, which PRs have gone stale, and whether review relationships are lopsided.
+Turns a GitHub repo's PR history into the metrics an engineering team actually cares about: how long reviews take, who's carrying the review load, which PRs have stalled, and whether review relationships are one-sided.
 
-**Live app:** [pr-review-dashboard.fly.dev](https://pr-review-dashboard.fly.dev) · **API:** [pr-review-api.fly.dev](https://pr-review-api.fly.dev)
+**Live:** [pr-review-dashboard.fly.dev](https://pr-review-dashboard.fly.dev) · **API:** [pr-review-api.fly.dev](https://pr-review-api.fly.dev)
 
-*(Fly apps sleep when idle — the first load may take a few seconds to wake up.)*
+(Apps sleep when idle on Fly's free tier, so the first load can take a few seconds.)
 
 ![Dashboard screenshot](docs/screenshot.png)
 
-## What it does
+## Features
 
-- **Time-to-first-review** and **time-to-merge** — median and average, with per-PR detail
-- **Review load** — reviews given per person, to spot who's reviewing everything and who never gets asked
-- **Stale PR detection** — open PRs with no activity past a configurable threshold
-- **Review reciprocity** — flags one-directional review relationships (A reviews B repeatedly, B never reciprocates)
-- Filterable by date range and author; syncs any repo on demand, then keeps it fresh automatically
-- **Log in with GitHub** to sync under your own account instead of the shared API key — your sync draws from your own rate limit, not a shared one
+- Time-to-first-review and time-to-merge: median and average, with trend sparklines
+- Review load per person, so it's obvious who's reviewing everything and who's never asked
+- Stale PR detection with a configurable idle threshold
+- Review reciprocity: flags it when one person always reviews another's PRs and it never goes the other way
+- Filter by date range or author; sync any repo on demand and it stays current on its own afterward
+- Log in with GitHub to sync under your own account and rate limit instead of a shared key
 
-## Architecture notes
+## Notes on how it's built
 
-A few decisions worth calling out:
+Incremental sync goes through GitHub's GraphQL `search` API instead of `repository.pullRequests`, because the latter has no `updated_at` filter. `search` supports `updated:>=`, so a stored cursor per repo means only PRs that actually changed get re-pulled after the first backfill.
 
-- **Incremental sync via GraphQL `search`, not the plain PR connection.** GitHub's `repository.pullRequests` has no `updated_at` filter, so a real incremental sync has to go through `search(query: "repo:owner/name is:pr updated:>=...")` instead. A stored cursor per repo means re-syncs only pull what changed rather than re-fetching history — a fresh repo does one backfill, then costs almost nothing on every run after.
-- **Metrics are SQL, not pandas.** Time-to-first-review, time-to-merge, review load, stale-PR detection, and reciprocity are all computed as SQL aggregations (window functions, correlated subqueries) directly against Postgres, so they run live on request instead of needing a precomputed cache or an in-memory DataFrame.
-- **Bot accounts and draft PRs are handled at the source.** Bots are flagged at ingestion time (from GitHub's `__typename`) so they don't skew review-load or reciprocity numbers downstream. Draft PRs are excluded from time-to-first-review, since GitHub's API has no `readyForReviewAt` field to correct the clock for them.
-- **The write path is the only thing gated.** `POST /sync` is the one endpoint that costs real GitHub API quota and database storage per call, so it's the only one behind auth (API key or a logged-in session, either satisfies it — constant-time comparison for the key, fails closed if neither is present). Everything read-only — the metrics themselves — stays public. The frontend asks for the key at runtime rather than baking it into the build, since a static site's JS bundle is public regardless of what "looks" hidden in it.
-- **A background scheduler, not a cron job someone has to remember.** Every tracked repo re-syncs on an interval automatically, each in its own transaction so one repo's failure can't affect the others in the same run.
-- **OAuth sessions live in a signed, encrypted cookie — not a database table.** Both Fly apps run 2 machines behind a load balancer; a server-side session store would need every machine to agree on state, while a signed cookie (Starlette `SessionMiddleware`) works identically regardless of which machine handles a request, no shared state required. The GitHub token inside it is additionally `Fernet`-encrypted, not just signed — the cookie is tamper-evident either way, but that stops the raw token from being readable by anyone who obtains it. When a logged-in user triggers a sync, their own token is used for that sync's GitHub calls instead of the shared one — real delegation, not just a nicer login screen.
-- **Commit ingestion is need-driven, not exhaustive.** PRs, reviews, comments, and now commits are all normalized into Postgres, but nothing pulls more than the metrics actually require — commits, for instance, are stored but don't yet back a metric of their own.
-- **The trend delta compares two halves of the data, not two calendar weeks.** A week-over-week comparison sounds more precise but is actually noisier — with a PR or two per week, it swings wildly on sample size alone and reads as a dramatic change that isn't real. Splitting the full (chronologically ordered) result set into an earlier and a more recent half, and requiring a minimum sample in each, gives a steadier and more honest signal; below that minimum, the delta just doesn't render rather than show a number the data can't support.
+Metrics are plain SQL against Postgres — window functions, correlated subqueries — computed live per request. No cache layer, no pandas step in between.
+
+Bots get flagged at ingestion time from GitHub's `__typename`, so review-load and reciprocity numbers don't get skewed by CI accounts. Draft PRs are left out of time-to-first-review, since GitHub doesn't expose a `readyForReviewAt` field to correct the clock for them.
+
+`POST /sync` is the only endpoint that spends real API quota and database storage, so it's the only one that requires auth (an API key or a logged-in session, either works) and it fails closed if neither is present. Everything else — the metrics themselves — is public. The frontend asks for the key at request time rather than baking it into the build, since a static site's bundle is public no matter how well you think you hid something in it.
+
+Sessions live in a signed, encrypted cookie rather than a database table. Both Fly apps run two machines, and a cookie works the same no matter which one handles a given request, so there's nothing to keep in sync between them. When someone's logged in, their sync uses their own GitHub token instead of the shared one.
+
+Trend deltas on the stat tiles compare two halves of the result set rather than week over week. With a couple of PRs a week, a calendar comparison is mostly sampling noise wearing a trend's clothes — the first version of this showed a 195% swing that turned out to be one PR. Splitting the data in half and requiring a minimum sample size fixed it.
 
 ## Stack
 
@@ -37,13 +38,13 @@ A few decisions worth calling out:
 | Backend | FastAPI · SQLAlchemy · PostgreSQL ([Neon](https://neon.tech)) · APScheduler |
 | Frontend | React · TypeScript · Vite · Recharts |
 | Ingestion | GitHub GraphQL API via `httpx` |
-| Auth | GitHub OAuth · signed/encrypted session cookies (`itsdangerous`, `cryptography`) |
-| Testing | pytest, with `respx` for mocked GitHub responses |
+| Auth | GitHub OAuth, signed/encrypted session cookies (`itsdangerous`, `cryptography`) |
+| Testing | pytest, `respx` for mocked GitHub responses |
 | Deploy | Docker on [Fly.io](https://fly.io), GitHub Actions CI |
 
 ## Testing
 
-The interesting edge cases for a project like this aren't the happy path — they're PRs with zero reviews, bot accounts inflating review-load numbers, draft PRs, PRs closed without merging, and reopened PRs. All of those are covered in `tests/`, exercised against mocked GraphQL fixtures rather than the live API, so the suite runs in well under a second with no network or database dependency.
+Most of the value is in the edge cases: PRs with zero reviews, bot accounts, draft PRs, PRs closed without merging, reopened PRs. All mocked against GraphQL fixtures rather than the live API, so the suite runs in under a second with no network or database needed.
 
 ```bash
 pytest   # in-memory SQLite, nothing external required
@@ -60,7 +61,7 @@ cp .env.example .env   # GITHUB_TOKEN, DATABASE_URL, SYNC_API_KEY, SESSION_SECRE
 uvicorn app.main:app --reload
 ```
 
-GitHub OAuth login itself needs real HTTPS to work (the session cookie is `SameSite=None; Secure`, since the frontend and backend are different origins — browsers only honor that over HTTPS), so it can only be exercised end-to-end against the deployed instance. Locally, sync via `SYNC_API_KEY` instead.
+GitHub OAuth needs real HTTPS (the session cookie is `SameSite=None; Secure`, and browsers only honor that over HTTPS), so the login flow only works end to end against the deployed instance. Locally, sync with `SYNC_API_KEY` instead.
 
 **Frontend**
 ```bash
@@ -88,9 +89,8 @@ npm run dev   # http://localhost:5173
 
 ## Deployment
 
-Two Fly.io apps (backend + a static frontend build behind nginx) and a Neon Postgres instance. Full walkthrough in [DEPLOY.md](DEPLOY.md).
+Two Fly.io apps (backend, plus a static frontend build behind nginx) and a Neon Postgres instance. Walkthrough in [DEPLOY.md](DEPLOY.md).
 
-## Possible extensions
+## What's next
 
-- **Rate-limit backoff** on the GitHub client, for syncing repos large enough to hit it
-- **A metric built on commit data** — e.g. time from first commit to PR open, or commit count as a churn signal — now that commits are actually ingested
+Rate-limit backoff on the GitHub client for repos big enough to hit it, and a metric that actually uses the commit data now that it's ingested — time from first commit to PR open, maybe, or commit count as a churn signal.
