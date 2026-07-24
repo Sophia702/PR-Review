@@ -67,8 +67,12 @@ Open `https://pr-review-dashboard.fly.dev` — the repo picker should show `enco
 - `fly logs --app pr-review-api` for backend errors (most likely: `DATABASE_URL` scheme or Neon SSL)
 - Browser devtools console for CORS errors (most likely: `CORS_ALLOW_ORIGINS` doesn't match the frontend's actual URL)
 
+## Status
+
+Live: https://pr-review-dashboard.fly.dev / https://pr-review-api.fly.dev, backed by Neon, synced against `encode/httpx`. Deployed by walking through exactly the steps above — `fly auth login` needs a real interactive terminal (it fails in headless/agent environments asking for `FLY_API_TOKEN`), so that step has to run in your own terminal; everything after (`fly apps create`, `fly secrets set`, `fly deploy`) works fine non-interactively once you're logged in.
+
 ## Notes
 
-- I wrote and reviewed these Dockerfiles/configs but couldn't build-test them end-to-end — there's no local Docker daemon and I don't have Fly/Neon credentials in this environment. The underlying `pip install`/`npm run build` commands they wrap were verified separately (see README status). Worth watching the first `fly deploy` output closely.
-- `auto_stop_machines = true` / `min_machines_running = 0` in both `fly.toml`s means the app sleeps when idle and cold-starts on the next request (a few seconds) — fine for a demo, not for anything latency-sensitive.
+- Verified the Neon connection and every metrics endpoint against real Postgres (not just SQLite) before deploying, then re-verified the live public URL with a headless-Chromium screenshot after.
+- Both apps came up with 2 machines each — that's Fly's default HA behavior on first deploy (pass `--ha=false` to avoid it), independent of `min_machines_running`. `auto_stop_machines = true` / `min_machines_running = 0` still means they scale to zero and cold-start (a few seconds) when idle.
 - Re-running a sync (`POST /sync/{owner}/{repo}`) is safe and incremental — it won't re-pull history it already has.

@@ -4,6 +4,8 @@ PR/Code Review Analytics Dashboard — pulls PR and review data from the GitHub 
 
 This is genuinely useful internal-tooling territory — companies build exactly this kind of thing internally (Google, GitHub itself, LinearB, etc. all have commercial versions).
 
+**Live demo:** https://pr-review-dashboard.fly.dev (API: https://pr-review-api.fly.dev), synced against `encode/httpx`. Fly apps sleep when idle, so the first load after a while may take a few seconds to cold-start.
+
 ## Status
 
 **Week 1 (ingestion) — done.** FastAPI service, SQLAlchemy models, GraphQL-based GitHub client, incremental sync via a stored cursor, sync tests against mocked GitHub responses.
@@ -16,9 +18,9 @@ This is genuinely useful internal-tooling territory — companies build exactly 
 
 **CI — done.** `.github/workflows/ci.yml` runs the pytest suite (fresh venv) and the frontend typecheck+build (`tsc --noEmit && vite build`, fresh `npm ci`) on push/PR to `main`. Both verified locally exactly as CI would run them before committing the workflow.
 
-**Deployment — config written, not yet live.** Fly.io (backend + frontend) + Neon (Postgres). See [DEPLOY.md](DEPLOY.md) — needs your Fly/Neon accounts to actually go live.
+**Deployment — done and live.** Fly.io (backend + frontend, both Dockerized) + Neon (Postgres). Verified against the live Postgres connection (not just SQLite) before deploying, and against the actual public URL after — headless-Chromium screenshot, zero console errors, real data including the reciprocity finding. See [DEPLOY.md](DEPLOY.md) for the full walkthrough.
 
-See [Suggested build order](#suggested-build-order-23-weeks) below for what's next.
+Every item in the original plan is built. What's left is optional polish (see notes throughout below) rather than open scope.
 
 ## Core idea
 
@@ -67,13 +69,13 @@ Compute these as SQL aggregations or pandas — either is defensible, pandas is 
 
 - Deploy against a real public repo (maybe your own repo, or a popular open-source repo) so the dashboard has real data and a live demo link
 
-**Config written, not yet live.** Dockerfiles + `fly.toml` for both apps (backend on Fly, frontend static build served via nginx on Fly), targeting Neon for managed Postgres. See [DEPLOY.md](DEPLOY.md) for the full walkthrough — the login/account-creation steps need your Fly and Neon accounts, so those are still open. Already synced against `encode/httpx` for local validation (few hundred PRs, not thousands — a large OSS repo would hit rate limits or take a long time on first backfill).
+**Live:** https://pr-review-dashboard.fly.dev, backed by https://pr-review-api.fly.dev and a Neon Postgres instance. Dockerfiles + `fly.toml` for both apps (backend on Fly, frontend static build served via nginx on Fly). Synced against `encode/httpx` (few hundred PRs, not thousands — a large OSS repo would hit rate limits or take a long time on first backfill). See [DEPLOY.md](DEPLOY.md) for the walkthrough.
 
 ## Suggested build order (2–3 weeks)
 
 - **Week 1**: GitHub API ingestion + DB schema + basic sync script (get this working end-to-end before touching UI) — *done*
 - **Week 2**: Metrics layer + tests for it, then basic React dashboard hitting a `/metrics` endpoint — *done*
-- **Week 3**: Polish — incremental sync, stale-PR detection, deploy, write README with a screenshot — *incremental sync, stale-PR detection, and CI already done as part of Weeks 1–2; deploy still open*
+- **Week 3**: Polish — incremental sync, stale-PR detection, deploy, write README with a screenshot — *done*
 
 ## Resume-bullet potential (draft)
 
