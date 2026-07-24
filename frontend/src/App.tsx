@@ -1,0 +1,164 @@
+import { useEffect, useState } from "react";
+import {
+  type DurationSummary,
+  type RepoSummary,
+  type ReviewerLoad,
+  type StalePR,
+  getReviewLoad,
+  getStalePRs,
+  getTimeToFirstReview,
+  getTimeToMerge,
+  listRepos,
+  triggerSync,
+} from "./api";
+import { Filters } from "./components/Filters";
+import { ReviewLoadChart } from "./components/ReviewLoadChart";
+import { StalePRTable } from "./components/StalePRTable";
+import { StatTile } from "./components/StatTile";
+import { TimeToMergeTrend } from "./components/TimeToMergeTrend";
+import { formatHours } from "./format";
+
+const EMPTY_SUMMARY: DurationSummary = { count: 0, avg_hours: null, median_hours: null, items: [] };
+
+export default function App() {
+  const [repos, setRepos] = useState<RepoSummary[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+
+  const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
+  const [author, setAuthor] = useState("");
+  const [staleDays, setStaleDays] = useState(14);
+
+  const [ttfr, setTtfr] = useState<DurationSummary>(EMPTY_SUMMARY);
+  const [ttm, setTtm] = useState<DurationSummary>(EMPTY_SUMMARY);
+  const [load, setLoad] = useState<ReviewerLoad[]>([]);
+  const [stale, setStale] = useState<StalePR[]>([]);
+
+  const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listRepos()
+      .then((data) => {
+        setRepos(data);
+        if (data.length > 0 && !selectedRepo) {
+          setSelectedRepo(`${data[0].owner}/${data[0].name}`);
+        }
+      })
+      .catch((e) => setError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRepo) return;
+    const [owner, name] = selectedRepo.split("/");
+    const filters = {
+      since: since ? new Date(since).toISOString() : undefined,
+      until: until ? new Date(until).toISOString() : undefined,
+      author: author || undefined,
+    };
+
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      getTimeToFirstReview(owner, name, filters),
+      getTimeToMerge(owner, name, filters),
+      getReviewLoad(owner, name, { since: filters.since, until: filters.until }),
+      getStalePRs(owner, name, staleDays),
+    ])
+      .then(([ttfrData, ttmData, loadData, staleData]) => {
+        setTtfr(ttfrData);
+        setTtm(ttmData);
+        setLoad(loadData);
+        setStale(staleData);
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [selectedRepo, since, until, author, staleDays]);
+
+  const handleSync = async (owner: string, name: string) => {
+    setSyncing(true);
+    setError(null);
+    try {
+      await triggerSync(owner, name);
+      const updated = await listRepos();
+      setRepos(updated);
+      setSelectedRepo(`${owner}/${name}`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <>
+      <header className="app-header">
+        <h1>PR Review Analytics</h1>
+        <p>Time-to-first-review, time-to-merge, review load, and stale PRs for a synced repo.</p>
+      </header>
+
+      <Filters
+        repos={repos}
+        selectedRepo={selectedRepo}
+        onSelectRepo={setSelectedRepo}
+        since={since}
+        until={until}
+        author={author}
+        staleDays={staleDays}
+        onSinceChange={setSince}
+        onUntilChange={setUntil}
+        onAuthorChange={setAuthor}
+        onStaleDaysChange={setStaleDays}
+        onSync={handleSync}
+        syncing={syncing}
+      />
+
+      {error && <div className="error-banner">{error}</div>}
+
+      {!selectedRepo && !error && (
+        <div className="panel-empty">Sync a repo above (e.g. "encode/httpx") to see metrics.</div>
+      )}
+
+      {selectedRepo && (
+        <>
+          <div className="stat-grid">
+            <StatTile
+              label="Median time-to-first-review"
+              value={formatHours(ttfr.median_hours)}
+              sublabel={`${ttfr.count} reviewed PR${ttfr.count === 1 ? "" : "s"}`}
+            />
+            <StatTile
+              label="Avg time-to-first-review"
+              value={formatHours(ttfr.avg_hours)}
+            />
+            <StatTile
+              label="Median time-to-merge"
+              value={formatHours(ttm.median_hours)}
+              sublabel={`${ttm.count} merged PR${ttm.count === 1 ? "" : "s"}`}
+            />
+            <StatTile label="Avg time-to-merge" value={formatHours(ttm.avg_hours)} />
+          </div>
+
+          <div className="panel">
+            <h2>Review load</h2>
+            <ReviewLoadChart data={load} />
+          </div>
+
+          <div className="panel">
+            <h2>Time-to-merge trend (weekly median)</h2>
+            <TimeToMergeTrend items={ttm.items} />
+          </div>
+
+          <div className="panel">
+            <h2>Stale PRs (open, idle {staleDays}+ days)</h2>
+            <StalePRTable data={stale} />
+          </div>
+
+          {loading && <div className="panel-empty">Refreshing…</div>}
+        </>
+      )}
+    </>
+  );
+}
