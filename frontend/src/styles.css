@@ -100,8 +100,27 @@ body {
 
 .filter-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+
+.auth-status {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+}
+
+.login-link {
+  font-size: 13px;
+  color: var(--series-1);
+  text-decoration: none;
+  padding: 7px 4px;
+}
+
+.login-link:hover {
+  text-decoration: underline;
 }
 
 button {

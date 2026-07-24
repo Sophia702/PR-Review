@@ -15,6 +15,9 @@ interface FiltersProps {
   onStaleDaysChange: (value: number) => void;
   onSync: (owner: string, name: string, apiKey: string) => void;
   syncing: boolean;
+  githubLogin: string | null;
+  loginUrl: string;
+  onLogout: () => void;
 }
 
 export function Filters({
@@ -31,6 +34,9 @@ export function Filters({
   onStaleDaysChange,
   onSync,
   syncing,
+  githubLogin,
+  loginUrl,
+  onLogout,
 }: FiltersProps) {
   const [newRepo, setNewRepo] = useState("");
   // Deliberately component-local state, never a build-time env var: this
@@ -102,6 +108,18 @@ export function Filters({
       </div>
 
       <div className="filter-actions">
+        {githubLogin ? (
+          <span className="auth-status">
+            Signed in as <strong>{githubLogin}</strong>
+            <button className="secondary" onClick={onLogout} style={{ marginLeft: 8 }}>
+              Log out
+            </button>
+          </span>
+        ) : (
+          <a className="login-link" href={loginUrl}>
+            Log in with GitHub
+          </a>
+        )}
         <input
           type="text"
           placeholder="owner/repo to sync"
@@ -109,18 +127,20 @@ export function Filters({
           onChange={(e) => setNewRepo(e.target.value)}
           style={{ minWidth: 160 }}
         />
-        <input
-          type="password"
-          placeholder="sync API key"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          style={{ minWidth: 120 }}
-          autoComplete="off"
-        />
+        {!githubLogin && (
+          <input
+            type="password"
+            placeholder="sync API key"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            style={{ minWidth: 120 }}
+            autoComplete="off"
+          />
+        )}
         <button
           className="secondary"
           onClick={handleSync}
-          disabled={syncing || !apiKey || (!newRepo.includes("/") && !selectedRepo)}
+          disabled={syncing || (!apiKey && !githubLogin) || (!newRepo.includes("/") && !selectedRepo)}
         >
           {syncing ? "Syncing…" : newRepo.includes("/") ? "Sync" : "Re-sync"}
         </button>

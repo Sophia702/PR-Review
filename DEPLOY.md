@@ -34,12 +34,25 @@ fly secrets set \
   GITHUB_TOKEN="ghp_..." \
   CORS_ALLOW_ORIGINS="https://pr-review-dashboard.fly.dev" \
   SYNC_API_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+  SESSION_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+  SESSION_ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  SESSION_COOKIE_SECURE=true \
+  FRONTEND_URL="https://pr-review-dashboard.fly.dev" \
+  BACKEND_PUBLIC_URL="https://pr-review-api.fly.dev" \
+  GITHUB_OAUTH_CLIENT_ID="<from a GitHub OAuth App, see below>" \
+  GITHUB_OAUTH_CLIENT_SECRET="<from the same OAuth App>" \
   --app pr-review-api
 
 fly deploy --app pr-review-api
 ```
 
-`CORS_ALLOW_ORIGINS` should be the frontend's eventual Fly URL (step 4) — comma-separate if you need more than one origin. `SYNC_API_KEY` gates `POST /sync` — without it configured, that endpoint rejects every request (fails closed), since it's the one action that costs real GitHub API quota and Neon storage on every call. No local Docker daemon is required; `fly deploy` builds remotely on Fly's infrastructure if Docker isn't running locally.
+`CORS_ALLOW_ORIGINS` should be the frontend's eventual Fly URL (step 4) — comma-separate if you need more than one origin. `SYNC_API_KEY` gates `POST /sync` alongside GitHub OAuth (either satisfies it) — without the key configured and nobody logged in, that endpoint rejects every request (fails closed), since it's the one action that costs real GitHub API quota and Neon storage on every call. No local Docker daemon is required; `fly deploy` builds remotely on Fly's infrastructure if Docker isn't running locally.
+
+For the OAuth credentials: create an OAuth App at [github.com/settings/developers](https://github.com/settings/developers) → New OAuth App, with:
+- Homepage URL: `https://pr-review-dashboard.fly.dev`
+- Authorization callback URL: `https://pr-review-api.fly.dev/auth/github/callback`
+
+then generate a Client Secret and use both values above.
 
 Once deployed, create the tables and do the first sync (needs the key from the `fly secrets set` above):
 
@@ -75,6 +88,8 @@ Open `https://pr-review-dashboard.fly.dev` — the repo picker should show `enco
 Live: https://pr-review-dashboard.fly.dev / https://pr-review-api.fly.dev, backed by Neon, synced against `encode/httpx`. Deployed by walking through exactly the steps above — `fly auth login` needs a real interactive terminal (it fails in headless/agent environments asking for `FLY_API_TOKEN`), so that step has to run in your own terminal; everything after (`fly apps create`, `fly secrets set`, `fly deploy`) works fine non-interactively once you're logged in.
 
 `POST /sync` was briefly live without the `SYNC_API_KEY` guard (any request would trigger a sync against arbitrary GitHub repos on this instance's token/DB). Fixed and redeployed — verified against the live URL that unauthenticated and wrong-key requests both 401, the correct key still works, and `/health`/`/repos`/`/metrics/*` stayed public throughout.
+
+GitHub OAuth login and commit-level ingestion added and deployed — verified: the login redirect carries the real `client_id` and correct `redirect_uri`/`return_to`, `/auth/me` and `/sync` (via API key) both work against the live API, and the `commits` table has real rows in production Neon. **The actual "click Login, authorize on github.com" step needs a real GitHub account** — that one has to be clicked through by a human once, since it can't be driven programmatically.
 
 ## Notes
 

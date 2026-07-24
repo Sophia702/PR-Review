@@ -4,7 +4,7 @@ import httpx
 import respx
 
 from app.github_client import GitHubClient
-from app.models import PullRequest, Review, SyncState, User
+from app.models import Commit, PullRequest, Review, SyncState, User
 from app.sync import sync_repo
 
 GRAPHQL_URL = "https://api.github.com/graphql"
@@ -15,7 +15,9 @@ def _iso(days_ago: float) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _pr_node(number, github_id, updated_at, author_login="alice", author_type="User", reviews=None, is_draft=False):
+def _pr_node(
+    number, github_id, updated_at, author_login="alice", author_type="User", reviews=None, is_draft=False, commits=None
+):
     return {
         "id": github_id,
         "number": number,
@@ -29,6 +31,18 @@ def _pr_node(number, github_id, updated_at, author_login="alice", author_type="U
         "author": {"login": author_login, "__typename": author_type},
         "reviews": {"nodes": reviews or []},
         "reviewThreads": {"nodes": []},
+        "commits": {"nodes": commits or []},
+    }
+
+
+def _commit_node(oid, message="fix stuff", committed_at=None, author_login="alice", author_type="User"):
+    return {
+        "commit": {
+            "oid": oid,
+            "message": message,
+            "committedDate": committed_at or _iso(2.5),
+            "author": {"user": {"login": author_login, "__typename": author_type} if author_login else None},
+        }
     }
 
 
@@ -139,3 +153,69 @@ def test_sync_repo_handles_pr_with_zero_reviews(db_session):
 
     assert synced == 1
     assert db_session.query(Review).count() == 0
+
+
+@respx.mock
+def test_sync_repo_ingests_commits(db_session):
+    respx.post(GRAPHQL_URL).mock(
+        return_value=_search_response(
+            [
+                _pr_node(
+                    1,
+                    "PR_1",
+                    _iso(1),
+                    commits=[
+                        _commit_node("SHA_1", message="add feature", author_login="bob"),
+                        _commit_node("SHA_2", message="fix typo", author_login="bob"),
+                    ],
+                )
+            ]
+        )
+    )
+
+    client = GitHubClient(token="fake-token")
+    sync_repo(db_session, "acme", "widgets", client=client)
+
+    commits = db_session.query(Commit).order_by(Commit.github_id).all()
+    assert [c.github_id for c in commits] == ["SHA_1", "SHA_2"]
+    assert commits[0].message == "add feature"
+    assert commits[0].author.login == "bob"
+
+
+@respx.mock
+def test_sync_repo_handles_pr_with_zero_commits(db_session):
+    respx.post(GRAPHQL_URL).mock(return_value=_search_response([_pr_node(1, "PR_1", _iso(1), commits=[])]))
+
+    client = GitHubClient(token="fake-token")
+    synced = sync_repo(db_session, "acme", "widgets", client=client)
+
+    assert synced == 1
+    assert db_session.query(Commit).count() == 0
+
+
+@respx.mock
+def test_sync_repo_commit_with_no_linked_github_user(db_session):
+    respx.post(GRAPHQL_URL).mock(
+        return_value=_search_response(
+            [_pr_node(1, "PR_1", _iso(1), commits=[_commit_node("SHA_1", author_login=None)])]
+        )
+    )
+
+    client = GitHubClient(token="fake-token")
+    sync_repo(db_session, "acme", "widgets", client=client)
+
+    commit = db_session.query(Commit).filter_by(github_id="SHA_1").one()
+    assert commit.author_id is None
+
+
+@respx.mock
+def test_sync_repo_commits_idempotent_on_rerun(db_session):
+    respx.post(GRAPHQL_URL).mock(
+        return_value=_search_response([_pr_node(1, "PR_1", _iso(1), commits=[_commit_node("SHA_1")])])
+    )
+
+    client = GitHubClient(token="fake-token")
+    sync_repo(db_session, "acme", "widgets", client=client)
+    sync_repo(db_session, "acme", "widgets", client=client)
+
+    assert db_session.query(Commit).count() == 1

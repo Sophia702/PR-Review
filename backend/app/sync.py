@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.github_client import GitHubClient
-from app.models import PullRequest, Repo, Review, ReviewComment, SyncState, User
+from app.models import Commit, PullRequest, Repo, Review, ReviewComment, SyncState, User
 from app.utils import ensure_utc
 
 _STATE_MAP = {"OPEN": "open", "CLOSED": "closed", "MERGED": "merged"}
@@ -69,6 +69,9 @@ def upsert_pull_request(db: Session, repo: Repo, node: dict) -> PullRequest:
         for comment_node in thread.get("comments", {}).get("nodes", []):
             upsert_review_comment(db, pr, comment_node)
 
+    for commit_node in node.get("commits", {}).get("nodes", []):
+        upsert_commit(db, pr, commit_node)
+
     return pr
 
 
@@ -97,8 +100,22 @@ def upsert_review_comment(db: Session, pr: PullRequest, node: dict) -> ReviewCom
     return comment
 
 
+def upsert_commit(db: Session, pr: PullRequest, node: dict) -> Commit:
+    commit_data = node["commit"]
+    author = upsert_user(db, commit_data.get("author", {}).get("user"))
+    commit = db.query(Commit).filter_by(github_id=commit_data["oid"]).one_or_none()
+    if commit is None:
+        commit = Commit(github_id=commit_data["oid"], pull_request_id=pr.id)
+        db.add(commit)
+    commit.author_id = author.id if author else None
+    commit.message = commit_data["message"]
+    commit.committed_at = _parse_dt(commit_data["committedDate"])
+    db.flush()
+    return commit
+
+
 def sync_repo(db: Session, owner: str, name: str, client: GitHubClient | None = None) -> int:
-    """Incrementally sync a repo's PRs, reviews, and review comments.
+    """Incrementally sync a repo's PRs, reviews, review comments, and commits.
 
     Resumes from the repo's SyncState cursor (max PR `updatedAt` seen so far)
     instead of re-pulling full history on every run. First run falls back to

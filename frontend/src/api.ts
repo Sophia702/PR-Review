@@ -48,6 +48,10 @@ export interface MetricsFilters {
   author?: string;
 }
 
+export interface CurrentUser {
+  github_login: string | null;
+}
+
 class ApiError extends Error {}
 
 async function getJSON<T>(path: string, params: Record<string, string | undefined> = {}): Promise<T> {
@@ -72,15 +76,38 @@ export async function triggerSync(
   repo: string,
   apiKey: string,
 ): Promise<{ repo: string; synced: number }> {
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["X-API-Key"] = apiKey;
+
+  // credentials: "include" sends the session cookie cross-origin (frontend
+  // and backend are different Fly subdomains) - a logged-in session works
+  // here even with no API key entered.
   const response = await fetch(`${API_BASE_URL}/sync/${owner}/${repo}`, {
     method: "POST",
-    headers: { "X-API-Key": apiKey },
+    headers,
+    credentials: "include",
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(body.detail ?? `sync failed: ${response.status}`);
   }
   return response.json();
+}
+
+export async function getCurrentUser(): Promise<CurrentUser> {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, { credentials: "include" });
+  if (!response.ok) return { github_login: null };
+  return response.json();
+}
+
+export function githubLoginUrl(returnTo: string): string {
+  const url = new URL(`${API_BASE_URL}/auth/github/login`);
+  url.searchParams.set("return_to", returnTo);
+  return url.toString();
+}
+
+export async function logout(): Promise<void> {
+  await fetch(`${API_BASE_URL}/auth/logout`, { method: "POST", credentials: "include" });
 }
 
 export function getTimeToFirstReview(

@@ -18,6 +18,25 @@ class Settings(BaseSettings):
     # Background periodic sync of every already-tracked repo. 0 disables it.
     sync_interval_minutes: int = 30
 
+    # GitHub OAuth App credentials (github.com/settings/developers). Lets a
+    # logged-in user's own token be used for their sync requests instead of
+    # the shared github_token, so a sync draws from their rate limit.
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
+    # Signs the session cookie (Starlette SessionMiddleware) and the
+    # short-lived OAuth `state` param. Generate with secrets.token_urlsafe(32).
+    session_secret_key: str = ""
+    # Fernet key (44-char urlsafe-base64) encrypting the GitHub token stored
+    # inside the session cookie, on top of the cookie's own signature.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    session_encryption_key: str = ""
+    # SameSite=None session cookies (required since frontend and backend are
+    # different origins) are only honored by browsers over HTTPS. Set false
+    # for local http:// dev.
+    session_cookie_secure: bool = True
+    frontend_url: str = "http://localhost:5173"
+    backend_public_url: str = "http://localhost:8000"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @property

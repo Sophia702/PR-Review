@@ -51,6 +51,7 @@ class PullRequest(Base):
     author = relationship("User")
     reviews = relationship("Review", back_populates="pull_request")
     review_comments = relationship("ReviewComment", back_populates="pull_request")
+    commits = relationship("Commit", back_populates="pull_request")
 
     __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_pr_repo_number"),)
 
@@ -79,6 +80,20 @@ class ReviewComment(Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
 
     pull_request = relationship("PullRequest", back_populates="review_comments")
+    author = relationship("User")
+
+
+class Commit(Base):
+    __tablename__ = "commits"
+
+    id = Column(Integer, primary_key=True)
+    github_id = Column(String, nullable=False, unique=True)  # commit oid
+    pull_request_id = Column(Integer, ForeignKey("pull_requests.id"), nullable=False, index=True)
+    author_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # null: bot or unlinked commit email
+    message = Column(Text, nullable=False)
+    committed_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    pull_request = relationship("PullRequest", back_populates="commits")
     author = relationship("User")
 
 

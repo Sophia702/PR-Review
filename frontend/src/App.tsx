@@ -5,12 +5,15 @@ import {
   type RepoSummary,
   type ReviewerLoad,
   type StalePR,
+  getCurrentUser,
   getReviewLoad,
   getReviewReciprocity,
   getStalePRs,
   getTimeToFirstReview,
   getTimeToMerge,
+  githubLoginUrl,
   listRepos,
+  logout,
   triggerSync,
 } from "./api";
 import { Filters } from "./components/Filters";
@@ -41,6 +44,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [githubLogin, setGithubLogin] = useState<string | null>(null);
 
   useEffect(() => {
     listRepos()
@@ -51,6 +55,7 @@ export default function App() {
         }
       })
       .catch((e) => setError(String(e)));
+    getCurrentUser().then((user) => setGithubLogin(user.github_login));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -98,6 +103,11 @@ export default function App() {
     }
   };
 
+  const handleLogout = async () => {
+    await logout();
+    setGithubLogin(null);
+  };
+
   return (
     <>
       <header className="app-header">
@@ -119,6 +129,9 @@ export default function App() {
         onStaleDaysChange={setStaleDays}
         onSync={handleSync}
         syncing={syncing}
+        githubLogin={githubLogin}
+        loginUrl={githubLoginUrl(window.location.href)}
+        onLogout={handleLogout}
       />
 
       {error && <div className="error-banner">{error}</div>}

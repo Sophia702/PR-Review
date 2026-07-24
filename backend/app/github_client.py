@@ -55,6 +55,21 @@ query($searchQuery: String!, $after: String) {
             }
           }
         }
+        commits(first: 100) {
+          nodes {
+            commit {
+              oid
+              message
+              committedDate
+              author {
+                user {
+                  login
+                  __typename
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
