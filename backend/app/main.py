@@ -1,7 +1,9 @@
+import secrets as secrets_module
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -9,9 +11,21 @@ from app import metrics
 from app.config import get_settings
 from app.db import Base, engine, get_db
 from app.models import Repo
+from app.scheduler import start_scheduler
 from app.sync import sync_repo
 
-app = FastAPI(title="PR Review Analytics")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    settings = get_settings()
+    scheduler = start_scheduler(settings.sync_interval_minutes) if settings.sync_interval_minutes > 0 else None
+    yield
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="PR Review Analytics", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,9 +35,10 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    Base.metadata.create_all(bind=engine)
+def require_sync_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    configured_key = get_settings().sync_api_key
+    if not configured_key or not x_api_key or not secrets_module.compare_digest(x_api_key, configured_key):
+        raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key")
 
 
 @app.get("/health")
@@ -42,7 +57,7 @@ def list_repos(db: Session = Depends(get_db)) -> list[RepoSummary]:
     return [RepoSummary(owner=r.owner, name=r.name) for r in db.query(Repo).order_by(Repo.owner, Repo.name).all()]
 
 
-@app.post("/sync/{owner}/{repo}")
+@app.post("/sync/{owner}/{repo}", dependencies=[Depends(require_sync_api_key)])
 def trigger_sync(owner: str, repo: str, db: Session = Depends(get_db)) -> dict:
     synced = sync_repo(db, owner, repo)
     return {"repo": f"{owner}/{repo}", "synced": synced}

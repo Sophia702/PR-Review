@@ -33,18 +33,21 @@ fly secrets set \
   DATABASE_URL="postgresql+psycopg://<user>:<password>@<host>.neon.tech/<dbname>?sslmode=require" \
   GITHUB_TOKEN="ghp_..." \
   CORS_ALLOW_ORIGINS="https://pr-review-dashboard.fly.dev" \
+  SYNC_API_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
   --app pr-review-api
 
 fly deploy --app pr-review-api
 ```
 
-`CORS_ALLOW_ORIGINS` should be the frontend's eventual Fly URL (step 4) — comma-separate if you need more than one origin. No local Docker daemon is required; `fly deploy` builds remotely on Fly's infrastructure if Docker isn't running locally.
+`CORS_ALLOW_ORIGINS` should be the frontend's eventual Fly URL (step 4) — comma-separate if you need more than one origin. `SYNC_API_KEY` gates `POST /sync` — without it configured, that endpoint rejects every request (fails closed), since it's the one action that costs real GitHub API quota and Neon storage on every call. No local Docker daemon is required; `fly deploy` builds remotely on Fly's infrastructure if Docker isn't running locally.
 
-Once deployed, create the tables and do the first sync:
+Once deployed, create the tables and do the first sync (needs the key from the `fly secrets set` above):
 
 ```bash
-curl -X POST https://pr-review-api.fly.dev/sync/encode/httpx
+curl -X POST -H "X-API-Key: <your SYNC_API_KEY>" https://pr-review-api.fly.dev/sync/encode/httpx
 ```
+
+After that, tracked repos re-sync automatically every `SYNC_INTERVAL_MINUTES` (default 30) — no need to keep calling this manually. The dashboard's own "Sync"/"Re-sync" button also asks for this key at runtime (never baked into the frontend build, since that's public and static).
 
 (SQLAlchemy's `Base.metadata.create_all` runs on app startup, so the schema is already there by the time this call lands.)
 
@@ -70,6 +73,8 @@ Open `https://pr-review-dashboard.fly.dev` — the repo picker should show `enco
 ## Status
 
 Live: https://pr-review-dashboard.fly.dev / https://pr-review-api.fly.dev, backed by Neon, synced against `encode/httpx`. Deployed by walking through exactly the steps above — `fly auth login` needs a real interactive terminal (it fails in headless/agent environments asking for `FLY_API_TOKEN`), so that step has to run in your own terminal; everything after (`fly apps create`, `fly secrets set`, `fly deploy`) works fine non-interactively once you're logged in.
+
+`POST /sync` was briefly live without the `SYNC_API_KEY` guard (any request would trigger a sync against arbitrary GitHub repos on this instance's token/DB). Fixed and redeployed — verified against the live URL that unauthenticated and wrong-key requests both 401, the correct key still works, and `/health`/`/repos`/`/metrics/*` stayed public throughout.
 
 ## Notes
 

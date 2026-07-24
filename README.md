@@ -1,128 +1,88 @@
-# PR-Review
+# PR Review Analytics
 
-PR/Code Review Analytics Dashboard — pulls PR and review data from the GitHub API for a repo (or org) and surfaces metrics that help a team understand its own review process: time-to-first-review, time-to-merge, review load distribution across teammates, stale PRs, etc.
+A dashboard that turns a GitHub repo's pull request history into the metrics an engineering team actually wants to know: how long reviews take, who's carrying the review load, which PRs have gone stale, and whether review relationships are lopsided.
 
-This is genuinely useful internal-tooling territory — companies build exactly this kind of thing internally (Google, GitHub itself, LinearB, etc. all have commercial versions).
+**Live app:** [pr-review-dashboard.fly.dev](https://pr-review-dashboard.fly.dev) · **API:** [pr-review-api.fly.dev](https://pr-review-api.fly.dev)
 
-**Live demo:** https://pr-review-dashboard.fly.dev (API: https://pr-review-api.fly.dev), synced against `encode/httpx`. Fly apps sleep when idle, so the first load after a while may take a few seconds to cold-start.
+*(Fly apps sleep when idle — the first load may take a few seconds to wake up.)*
 
-## Status
+![Dashboard screenshot](docs/screenshot.png)
 
-**Week 1 (ingestion) — done.** FastAPI service, SQLAlchemy models, GraphQL-based GitHub client, incremental sync via a stored cursor, sync tests against mocked GitHub responses.
+## What it does
 
-**Week 2 (metrics layer) — done.** SQL-based metrics (time-to-first-review, time-to-merge, review load, stale PRs), wired into `/metrics/{owner}/{repo}/...` endpoints, tested against fixture data covering bot accounts, draft PRs, zero-review PRs, and PRs closed without merging.
+- **Time-to-first-review** and **time-to-merge** — median and average, with per-PR detail
+- **Review load** — reviews given per person, to spot who's reviewing everything and who never gets asked
+- **Stale PR detection** — open PRs with no activity past a configurable threshold
+- **Review reciprocity** — flags one-directional review relationships (A reviews B repeatedly, B never reciprocates)
+- Filterable by date range and author; syncs any repo on demand, then keeps it fresh automatically
 
-**Validated against the live GitHub API** — synced `encode/httpx` end-to-end (41 PRs, real reviews, `dependabot` correctly flagged as a bot) and confirmed all four `/metrics` endpoints return sane numbers against real data.
+## Architecture notes
 
-**Week 2 (dashboard) — done.** React + TypeScript + Vite + Recharts dashboard in `frontend/`: repo picker with an inline sync/re-sync action, date-range and author filters, stat tiles for time-to-first-review and time-to-merge, a review-load bar chart, a weekly time-to-merge trend line, and a stale-PR table. Verified in an actual headless-Chromium run against the live-synced `encode/httpx` data — no console errors, real numbers rendered.
+A few decisions worth calling out:
 
-**CI — done.** `.github/workflows/ci.yml` runs the pytest suite (fresh venv) and the frontend typecheck+build (`tsc --noEmit && vite build`, fresh `npm ci`) on push/PR to `main`. Both verified locally exactly as CI would run them before committing the workflow.
+- **Incremental sync via GraphQL `search`, not the plain PR connection.** GitHub's `repository.pullRequests` has no `updated_at` filter, so a real incremental sync has to go through `search(query: "repo:owner/name is:pr updated:>=...")` instead. A stored cursor per repo means re-syncs only pull what changed rather than re-fetching history — a fresh repo does one backfill, then costs almost nothing on every run after.
+- **Metrics are SQL, not pandas.** Time-to-first-review, time-to-merge, review load, stale-PR detection, and reciprocity are all computed as SQL aggregations (window functions, correlated subqueries) directly against Postgres, so they run live on request instead of needing a precomputed cache or an in-memory DataFrame.
+- **Bot accounts and draft PRs are handled at the source.** Bots are flagged at ingestion time (from GitHub's `__typename`) so they don't skew review-load or reciprocity numbers downstream. Draft PRs are excluded from time-to-first-review, since GitHub's API has no `readyForReviewAt` field to correct the clock for them.
+- **The write path is the only thing gated.** `POST /sync` is the one endpoint that costs real GitHub API quota and database storage per call, so it's the only one behind an API key (constant-time comparison, fails closed if unconfigured). Everything read-only — the metrics themselves — stays public. The frontend asks for that key at runtime rather than baking it into the build, since a static site's JS bundle is public regardless of what "looks" hidden in it.
+- **A background scheduler, not a cron job someone has to remember.** Every tracked repo re-syncs on an interval automatically, each in its own transaction so one repo's failure can't affect the others in the same run.
 
-**Deployment — done and live.** Fly.io (backend + frontend, both Dockerized) + Neon (Postgres). Verified against the live Postgres connection (not just SQLite) before deploying, and against the actual public URL after — headless-Chromium screenshot, zero console errors, real data including the reciprocity finding. See [DEPLOY.md](DEPLOY.md) for the full walkthrough.
+## Stack
 
-Every item in the original plan is built. What's left is optional polish (see notes throughout below) rather than open scope.
+| | |
+|---|---|
+| Backend | FastAPI · SQLAlchemy · PostgreSQL ([Neon](https://neon.tech)) · APScheduler |
+| Frontend | React · TypeScript · Vite · Recharts |
+| Ingestion | GitHub GraphQL API via `httpx` |
+| Testing | pytest, with `respx` for mocked GitHub responses |
+| Deploy | Docker on [Fly.io](https://fly.io), GitHub Actions CI |
 
-## Core idea
+## Testing
 
-Pull PR and review data from the GitHub API for a repo (or org) and surface metrics that help a team understand its own review process — time-to-first-review, time-to-merge, review load distribution across teammates, stale PRs, etc. This is genuinely useful internal-tooling territory — companies build exactly this kind of thing internally (Google, GitHub itself, LinearB, etc. all have commercial versions).
-
-## Scope breakdown
-
-### 1. Data ingestion (backend)
-
-- FastAPI service authenticating via GitHub OAuth (or a personal access token to start, simpler)
-- Pull PRs, reviews, comments, commits via GitHub's REST or GraphQL API for a given repo
-- Store normalized data in PostgreSQL: `pull_requests`, `reviews`, `review_comments`, `users`, `repos`
-- Background job (Celery, or just APScheduler if you want to keep it simpler) to periodically sync new data rather than re-fetching everything each time — this is a good engineering decision to point to ("incremental sync using GitHub's `updated_at` cursor rather than full re-pull")
-
-**Built:** GraphQL (not REST) via `search(query: "repo:owner/name is:pr updated:>=...")`, since the plain `repository.pullRequests` connection has no `updated_at` filter. A `sync_state` table tracks the max `updatedAt` cursor per repo so reruns only pull what changed, falling back to a `BACKFILL_DAYS` window on first sync. Bots are flagged at ingestion time (`User.is_bot`, from GraphQL's `__typename`) rather than filtered ad hoc later. APScheduler over Celery — no broker needed for a single-service deploy. (Scheduled job itself not wired up yet — sync currently runs via the API or the CLI script.)
-
-### 2. Metrics/analytics layer
-
-This is where the actual engineering thinking lives — pick a handful of well-defined, non-trivial metrics:
-
-- **Time-to-first-review**: PR opened → first review submitted
-- **Time-to-merge**: PR opened → merged
-- **Review load**: reviews given per person, to spot bottlenecks (one person reviewing everything)
-- **Stale PR detection**: open >N days with no activity
-- **Review reciprocity** (fun one, stretch goal): does person A review person B's PRs but not vice versa — could surface team dynamics
-
-Compute these as SQL aggregations or pandas — either is defensible, pandas is faster to prototype with.
-
-**Built:** all five as SQL aggregations (SQLAlchemy Core `select`/`func`, not pandas) in `backend/app/metrics.py`, so they run live against `/metrics` without loading full tables into memory. Review reciprocity has a `min_interactions` floor (default 2) so single-review noise doesn't get reported as a "pattern" — validated against `encode/httpx`, which surfaced a real one-directional pair.
-
-### 3. Frontend/dashboard
-
-- React + a charting library (Recharts) — bar charts for review load, line chart for time-to-merge trend over weeks, a table of stale PRs
-- Filterable by repo, by date range, by author
-
-**Built:** `frontend/` — Vite + React + TypeScript + Recharts. Repo picker (with an inline sync/re-sync button so you don't need the API directly), since/until/author filters, a stale-days threshold control, plus a review-reciprocity table flagging one-directional review pairs. Time-to-merge trend is bucketed into weekly medians client-side from the `time-to-merge` endpoint's per-PR items, rather than a dedicated backend aggregation. Chart colors and mark specs (bar thickness, line width, tooltip styling, stale/reciprocity badges) follow a validated categorical/sequential palette rather than library defaults.
-
-### 4. Testing + CI
-
-- pytest for the ingestion logic (mock GitHub API responses) and the metrics calculations — this is the part with real edge cases (PRs with zero reviews, PRs reviewed then reopened, bot accounts skewing review-load stats)
-- GitHub Actions running tests on push
-
-**Built:** pytest suite (`tests/test_sync.py`, `tests/test_metrics.py`) covering pagination, bot-account flagging, idempotent re-sync, zero-review PRs, draft-PR exclusion, and merged-vs-closed-without-merge PRs. `.github/workflows/ci.yml` runs the suite plus the frontend build on push/PR.
-
-### 5. Deployment
-
-- Deploy against a real public repo (maybe your own repo, or a popular open-source repo) so the dashboard has real data and a live demo link
-
-**Live:** https://pr-review-dashboard.fly.dev, backed by https://pr-review-api.fly.dev and a Neon Postgres instance. Dockerfiles + `fly.toml` for both apps (backend on Fly, frontend static build served via nginx on Fly). Synced against `encode/httpx` (few hundred PRs, not thousands — a large OSS repo would hit rate limits or take a long time on first backfill). See [DEPLOY.md](DEPLOY.md) for the walkthrough.
-
-## Suggested build order (2–3 weeks)
-
-- **Week 1**: GitHub API ingestion + DB schema + basic sync script (get this working end-to-end before touching UI) — *done*
-- **Week 2**: Metrics layer + tests for it, then basic React dashboard hitting a `/metrics` endpoint — *done*
-- **Week 3**: Polish — incremental sync, stale-PR detection, deploy, write README with a screenshot — *done*
-
-## Resume-bullet potential (draft)
-
-- Built a PR analytics dashboard (FastAPI, PostgreSQL, React) ingesting GitHub API data via incremental sync, surfacing review-load and time-to-merge metrics across a repo's contributors
-- Designed metrics (time-to-first-review, stale-PR detection, review-load distribution) as SQL aggregations over a normalized PR/review schema, validated against [X] real repos
-- Wrote a pytest suite mocking GitHub API responses to test ingestion and metric edge cases (bot accounts, reopened PRs, zero-review merges)
-
-## Running it
+The interesting edge cases for a project like this aren't the happy path — they're PRs with zero reviews, bot accounts inflating review-load numbers, draft PRs, PRs closed without merging, and reopened PRs. All of those are covered in `tests/`, exercised against mocked GraphQL fixtures rather than the live API, so the suite runs in well under a second with no network or database dependency.
 
 ```bash
-# from repo root
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements-dev.txt
-
-cp backend/.env.example backend/.env   # fill in GITHUB_TOKEN, DATABASE_URL
-
-# tests (use in-memory SQLite, no GitHub token or Postgres needed)
-.venv/bin/python -m pytest
-
-# run the API (needs Postgres reachable at DATABASE_URL)
-PYTHONPATH=backend .venv/bin/uvicorn app.main:app --reload
-
-# one-off incremental sync from the CLI, instead of via the API
-PYTHONPATH=backend .venv/bin/python backend/scripts/sync_repo.py <owner> <repo>
+pytest   # in-memory SQLite, nothing external required
 ```
 
-Endpoints once the app is running:
+## Running locally
 
-- `GET /repos` — repos synced so far
-- `POST /sync/{owner}/{repo}` — trigger an incremental sync
-- `GET /metrics/{owner}/{repo}/time-to-first-review?since=&until=&author=`
-- `GET /metrics/{owner}/{repo}/time-to-merge?since=&until=&author=`
-- `GET /metrics/{owner}/{repo}/review-load?since=&until=`
-- `GET /metrics/{owner}/{repo}/stale-prs?stale_days=14`
-- `GET /metrics/{owner}/{repo}/review-reciprocity?min_interactions=2`
+**Backend**
+```bash
+cd backend
+python3 -m venv ../.venv && source ../.venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env   # GITHUB_TOKEN, DATABASE_URL, SYNC_API_KEY
+uvicorn app.main:app --reload
+```
 
-### Frontend
-
+**Frontend**
 ```bash
 cd frontend
 npm install
-cp .env.example .env   # VITE_API_BASE_URL defaults to http://localhost:8000
-
-npm run dev             # http://localhost:5173, needs the backend running
-npm run build            # type-checks (tsc --noEmit) then produces dist/
+cp .env.example .env
+npm run dev   # http://localhost:5173
 ```
 
-See [DEPLOY.md](DEPLOY.md) for deploying both to Fly.io with Neon Postgres.
+## API
 
-The backend needs `CORS_ALLOW_ORIGINS` to include the dev server's origin — it already defaults to `["http://localhost:5173"]` in `backend/app/config.py`.
+| Endpoint | Notes |
+|---|---|
+| `GET /repos` | Repos synced so far |
+| `POST /sync/{owner}/{repo}` | Trigger an incremental sync — requires `X-API-Key` |
+| `GET /metrics/{owner}/{repo}/time-to-first-review` | `?since=&until=&author=` |
+| `GET /metrics/{owner}/{repo}/time-to-merge` | `?since=&until=&author=` |
+| `GET /metrics/{owner}/{repo}/review-load` | `?since=&until=` |
+| `GET /metrics/{owner}/{repo}/stale-prs` | `?stale_days=14` |
+| `GET /metrics/{owner}/{repo}/review-reciprocity` | `?min_interactions=2` |
+
+## Deployment
+
+Two Fly.io apps (backend + a static frontend build behind nginx) and a Neon Postgres instance. Full walkthrough in [DEPLOY.md](DEPLOY.md).
+
+## Possible extensions
+
+Scoped out deliberately rather than left unfinished:
+
+- **GitHub OAuth**, for per-user tokens instead of a single shared PAT — reasonable for a multi-tenant version of this, unnecessary for a single-repo demo
+- **Commit-level ingestion**, alongside PRs/reviews/comments — no current metric needs it, so it's not worth the schema and quota cost until one does
+- **Rate-limit backoff** on the GitHub client, for syncing repos large enough to hit it

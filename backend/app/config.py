@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     # Comma-separated rather than a JSON list — much easier to set via
     # `fly secrets set` / plain shell env vars than a quoted JSON array.
     cors_allow_origins: str = "http://localhost:5173"
+    # Required to call POST /sync. Empty means "reject everything" (fail
+    # closed) rather than "auth disabled" - an unset key on a deployed
+    # instance should never mean the endpoint is silently open.
+    sync_api_key: str = ""
+    # Background periodic sync of every already-tracked repo. 0 disables it.
+    sync_interval_minutes: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -13,7 +13,7 @@ interface FiltersProps {
   onUntilChange: (value: string) => void;
   onAuthorChange: (value: string) => void;
   onStaleDaysChange: (value: number) => void;
-  onSync: (owner: string, name: string) => void;
+  onSync: (owner: string, name: string, apiKey: string) => void;
   syncing: boolean;
 }
 
@@ -33,19 +33,25 @@ export function Filters({
   syncing,
 }: FiltersProps) {
   const [newRepo, setNewRepo] = useState("");
+  // Deliberately component-local state, never a build-time env var: this
+  // static site is publicly served, so anything baked into the JS bundle
+  // (like VITE_* vars) is readable by anyone. The key only ever exists in
+  // memory here and on the wire to the backend, entered by whoever is
+  // actually operating the sync.
+  const [apiKey, setApiKey] = useState("");
 
   const handleSync = () => {
     if (newRepo.includes("/")) {
       const [owner, name] = newRepo.split("/").map((s) => s.trim());
       if (owner && name) {
-        onSync(owner, name);
+        onSync(owner, name, apiKey);
         setNewRepo("");
         return;
       }
     }
     if (selectedRepo) {
       const [owner, name] = selectedRepo.split("/");
-      onSync(owner, name);
+      onSync(owner, name, apiKey);
     }
   };
 
@@ -103,7 +109,19 @@ export function Filters({
           onChange={(e) => setNewRepo(e.target.value)}
           style={{ minWidth: 160 }}
         />
-        <button className="secondary" onClick={handleSync} disabled={syncing || (!newRepo.includes("/") && !selectedRepo)}>
+        <input
+          type="password"
+          placeholder="sync API key"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          style={{ minWidth: 120 }}
+          autoComplete="off"
+        />
+        <button
+          className="secondary"
+          onClick={handleSync}
+          disabled={syncing || !apiKey || (!newRepo.includes("/") && !selectedRepo)}
+        >
           {syncing ? "Syncing…" : newRepo.includes("/") ? "Sync" : "Re-sync"}
         </button>
       </div>

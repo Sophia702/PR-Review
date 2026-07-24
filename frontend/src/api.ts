@@ -67,8 +67,15 @@ export function listRepos(): Promise<RepoSummary[]> {
   return getJSON("/repos");
 }
 
-export async function triggerSync(owner: string, repo: string): Promise<{ repo: string; synced: number }> {
-  const response = await fetch(`${API_BASE_URL}/sync/${owner}/${repo}`, { method: "POST" });
+export async function triggerSync(
+  owner: string,
+  repo: string,
+  apiKey: string,
+): Promise<{ repo: string; synced: number }> {
+  const response = await fetch(`${API_BASE_URL}/sync/${owner}/${repo}`, {
+    method: "POST",
+    headers: { "X-API-Key": apiKey },
+  });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(body.detail ?? `sync failed: ${response.status}`);

@@ -83,11 +83,11 @@ export default function App() {
       .finally(() => setLoading(false));
   }, [selectedRepo, since, until, author, staleDays]);
 
-  const handleSync = async (owner: string, name: string) => {
+  const handleSync = async (owner: string, name: string, apiKey: string) => {
     setSyncing(true);
     setError(null);
     try {
-      await triggerSync(owner, name);
+      await triggerSync(owner, name, apiKey);
       const updated = await listRepos();
       setRepos(updated);
       setSelectedRepo(`${owner}/${name}`);
